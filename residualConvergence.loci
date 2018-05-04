@@ -27,7 +27,7 @@ namespace chem {
 
   // calculate normalized residuals
   $type normResidual param<residual>;
-  $rule singleton(normResidual <- residual, maxResidual, ncycle) {
+  $rule singleton(normResidual <- residual, maxResidual) {
     $normResidual.rtrms = $residual.rtrms / $maxResidual.rtrms;
     $normResidual.mtrms = $residual.mtrms / $maxResidual.mtrms;
     $normResidual.etrms = $residual.etrms / $maxResidual.etrms;
