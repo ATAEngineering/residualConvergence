@@ -1,0 +1,78 @@
+#include <Loci.h>
+// chem.lh must come before chemio.h
+$include "chem.lh"
+#include "chemio.h"
+#include "residual.h"
+#include <fstream>
+
+namespace chem {
+  // determine when maximum residual should be calculated for normalization
+  $type findMaxResid param<bool>;
+  $rule singleton(findMaxResid{n,it} <- ncycle{n}, $it{n,it}, newton_iter) {
+    $findMaxResid{n,it} = ($ncycle{n} < 5 && $$it{n,it} == $newton_iter - 1);
+  }
+
+  // calculate maximum residual
+  $type residual param<residual>;
+  $type maxResidual param<residual>;
+  $rule singleton(maxResidual <- residual, ncycle), conditional(findMaxResid) {
+    if ($ncycle == 0) {
+      $maxResidual = $residual;
+    } else {
+      $maxResidual.rtrms = std::max($maxResidual.rtrms, $residual.rtrms);
+      $maxResidual.mtrms = std::max($maxResidual.mtrms, $residual.mtrms);
+      $maxResidual.etrms = std::max($maxResidual.etrms, $residual.etrms);
+    }
+  }
+
+  // calculate normalized residuals
+  $type normResidual param<residual>;
+  $rule singleton(normResidual <- residual, maxResidual, ncycle) {
+    $normResidual.rtrms = $residual.rtrms / $maxResidual.rtrms;
+    $normResidual.mtrms = $residual.mtrms / $maxResidual.mtrms;
+    $normResidual.etrms = $residual.etrms / $maxResidual.etrms;
+  }
+
+  // output normalized residuals to file
+  $rule pointwise(OUTPUT{n,it} <- normResidual{n,it}, ncycle{n},
+                  integratedOutputFileManager{n,it}),
+      conditional(do_report{n,it}), prelude{
+    $[Once] {
+      double rtrms = realToDouble(sqrt($normResidual{n,it}->rtrms));
+      double etrms = realToDouble(sqrt($normResidual{n,it}->etrms));
+      double mtrms = realToDouble(sqrt($normResidual{n,it}->mtrms));
+
+      std::string filename = "output/residnorm.dat";
+      ofstream *ofile = getStreamFluxFile(filename, *$ncycle{n} == 0);
+      if (!ofile->fail()) {
+        (*ofile) << *$ncycle{n} << ' ' << rtrms << ' ' << etrms << ' ' << mtrms
+                 << std::endl;
+      } else {
+        std::cerr << "ERROR: Cannot open output/residnorm.dat" << std::endl;
+      }
+    }
+  };
+
+  // check if convergence has been reached
+  $type convergenceThreshold param<real>;
+  $rule default(convergenceThreshold) { $convergenceThreshold = 1.0e-5; }
+
+  $type isConverged param<bool>;
+  $rule singleton(isConverged <- normResidual, convergenceThreshold) { 
+    $isConverged = false;
+    if (sqrt($normResidual.rtrms) < $convergenceThreshold &&
+        sqrt($normResidual.etrms) < $convergenceThreshold &&
+        sqrt($normResidual.mtrms) < $convergenceThreshold) {
+      $isConverged = true;
+    }
+  }
+
+  // tell chem to stop and write out results if convergence has been reached
+  $rule singleton(OUTPUT), constraint(UNIVERSE), conditional(isConverged) {
+    $[Once] {
+      std::fstream stopFile("stop", std::ios::out);
+      stopFile.close();
+    }
+  }
+
+}
